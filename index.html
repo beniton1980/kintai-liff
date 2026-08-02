@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>タイムレコーダー</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  
+  <style>
+    body { background-color: #f5f5f5; font-family: sans-serif; text-align: center; padding: 20px; margin: 0; }
+    .title-area { margin-bottom: 20px; }
+    #userName { color: #333; font-size: 1.2em; }
+    #dateDisplay { font-size: 16px; color: #666; margin-top: 10px; }
+    #clockDisplay { font-size: 38px; font-weight: bold; color: #222; margin-bottom: 15px; letter-spacing: 2px; }
+    
+    .btn { 
+      width: 90%; max-width: 300px; height: 80px; margin: 10px auto; 
+      font-size: 24px; font-weight: bold; border: none; border-radius: 10px; 
+      color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); cursor: pointer; display: block;
+    }
+    .btn:active { transform: translateY(2px); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .btn-in { background-color: #00B900; } 
+    .btn-break { background-color: #f39c12; } 
+    .btn-out { background-color: #e74c3c; } 
+    #status { margin-top: 20px; font-weight: bold; color: #333; }
+  </style>
+</head>
+<body>
+  <div class="title-area">
+    <h3 id="userName">読込中...</h3>
+    <div id="dateDisplay">----年--月--日(--)</div>
+    <div id="clockDisplay">--:--:--</div>
+    <p>出退勤の記録をしましょう</p>
+  </div>
+
+  <button class="btn btn-in" onclick="sendData('出勤')">🔵 出 勤</button>
+  <button class="btn btn-break" onclick="sendData('休憩開始')">⚪️ 休憩開始</button>
+  <button class="btn btn-break" onclick="sendData('休憩終了')">⚪️ 休憩終了</button>
+  <button class="btn btn-out" onclick="sendData('退勤')">🔴 退 勤</button>
+
+  <p id="status"></p>
+
+  <script>
+    const LIFF_ID = "2010761826-WrnKXQXa"; 
+    const WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyACFOK0r_yHwEzY2Y8S3zENsGJ_KdSUpoR8gihKnJ2sxv9KovuFHexHzMUB51JVFlO/exec"; 
+    
+    let isProcessing = false;
+    let globalStoreId = "";
+    let registeredStaffName = ""; 
+
+    function updateClock() {
+      const now = new Date();
+      const days = ['日', '月', '火', '水', '木', '金', '土'];
+      document.getElementById('dateDisplay').innerText = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 (${days[now.getDay()]})`;
+      document.getElementById('clockDisplay').innerText = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+    }
+    
+    setInterval(updateClock, 1000);
+    updateClock(); 
+
+    window.onload = function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      let currentStoreId = urlParams.get('store_id');
+
+      liff.init({ liffId: LIFF_ID }).then(() => {
+        // 店舗IDの確実な保存と呼び出し
+        if (currentStoreId && currentStoreId !== "null") {
+          localStorage.setItem('saved_store_id', currentStoreId);
+        } else {
+          currentStoreId = localStorage.getItem('saved_store_id');
+        }
+        globalStoreId = currentStoreId;
+
+        if (!globalStoreId || globalStoreId === "null") {
+           Swal.fire('エラー', '正しいQRコードから読み込んでください', 'error');
+           return;
+        }
+
+        if (liff.isLoggedIn()) {
+          liff.getProfile().then(profile => {
+            checkUserRegistration(profile, globalStoreId);
+          });
+        } else {
+          liff.login({ redirectUri: window.location.href });
+        }
+      }).catch(err => {
+        document.getElementById('status').innerText = `初期化エラー: ${err}`;
+      });
+    };
+
+    function checkUserRegistration(profile, storeId) {
+      Swal.fire({ title: 'データ確認中...', html: 'スタッフ名簿をチェックしています☁️', allowOutsideClick: false, showConfirmButton: false, didOpen: () => { Swal.showLoading(); } });
+      fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ actionType: 'check_user', userId: profile.userId, storeId: storeId }) })
+      .then(response => response.json())
+      .then(data => {
+        if (data.status === 'error') {
+          Swal.fire('システムエラー', `裏側でエラーが発生しました:<br>${data.message}`, 'error');
+        } else if (data.isRegistered) {
+          registeredStaffName = data.staffName;
+          document.getElementById('userName').innerText = `${registeredStaffName} さん`;
+          Swal.close();
+        } else {
+          promptRegistration(profile, storeId);
+        }
+      }).catch(err => { Swal.fire('通信エラー', 'データの確認に失敗しました。画面を再読み込みしてください。', 'error'); });
+    }
+
+    // ★修正：登録失敗時に自動で出し直すループ設計
+    function promptRegistration(profile, storeId) {
+      Swal.fire({
+        title: '初回登録のお願い', 
+        html: '給与計算に使用するため、<br><b>フルネーム（本名）</b>を入力してください。<br><br><span style="font-size:0.8em; color:gray;">※一度登録すると変更できません</span>',
+        input: 'text', inputPlaceholder: '例：石上 忠義', allowOutsideClick: false, confirmButtonText: 'この名前で登録する',
+        preConfirm: (name) => { if (!name || name.trim() === "") Swal.showValidationMessage('本名を入力してください'); return name.trim(); }
+      }).then((result) => {
+        if (result.isConfirmed) {
+          const inputName = result.value;
+          Swal.fire({ title: '登録中...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+          
+          fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ actionType: 'register_user', userId: profile.userId, storeId: storeId, staffName: inputName }) })
+          .then(r => r.json()).then(data => {
+            if (data.status === 'success') {
+              registeredStaffName = inputName; 
+              document.getElementById('userName').innerText = `${registeredStaffName} さん`;
+              Swal.fire('登録完了！', '本名を登録しました。<br>これより出退勤の記録が可能です。', 'success');
+            } else {
+              // 登録エラー時はOKを押した後に再度入力画面を呼び出す
+              Swal.fire('登録エラー', `登録に失敗しました:<br>${data.message}`, 'error').then(() => {
+                promptRegistration(profile, storeId);
+              });
+            }
+          }).catch(err => { 
+            // 通信エラー時もOKを押した後に再度入力画面を呼び出す
+            Swal.fire('通信エラー', '登録に失敗しました。もう一度お試しください。', 'error').then(() => {
+                promptRegistration(profile, storeId);
+            });
+          });
+        }
+      });
+    }
+
+    function sendData(type) {
+      if (isProcessing) return;
+      if (!liff.isLoggedIn()) { Swal.fire('エラー', 'LINEログインが必要です', 'error'); return; }
+      if (!registeredStaffName) { Swal.fire('エラー', '本名が登録されていません。画面を再読み込みしてください。', 'error'); return; }
+
+      const todayString = new Date().toLocaleDateString(); 
+      let savedDate = localStorage.getItem('actionDate_' + globalStoreId);
+      let lastAction = localStorage.getItem('lastAction_' + globalStoreId);
+
+      if (savedDate !== todayString) lastAction = null;
+      if (type === '出勤' && (lastAction === '出勤' || lastAction === '休憩開始' || lastAction === '休憩終了')) { Swal.fire('エラー', 'すでに出勤しています', 'warning'); return; }
+      if (type !== '出勤' && (!lastAction || lastAction === '退勤')) { Swal.fire('エラー', 'まずは「出勤」を記録してください', 'warning'); return; }
+      if (type === '休憩開始' && lastAction === '休憩開始') { Swal.fire('エラー', 'すでに休憩中です', 'warning'); return; }
+      if (type === '休憩終了' && lastAction !== '休憩開始') { Swal.fire('エラー', '休憩開始が記録されていません', 'warning'); return; }
+
+      const now = new Date();
+      const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+      isProcessing = true;
+
+      Swal.fire({ title: '位置情報を取得中...', html: `<b>${type}</b> を記録しています<br>少々お待ちください☁️`, allowOutsideClick: false, showConfirmButton: false, didOpen: () => { Swal.showLoading(); } });
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => { executePunch(type, timeString, todayString, position.coords.latitude, position.coords.longitude); },
+        (error) => { executePunch(type, timeString, todayString, null, null); },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    }
+
+    function executePunch(type, timeString, todayString, lat, lng) {
+      liff.getProfile().then(profile => {
+        const payload = {
+          userId: profile.userId,
+          displayName: registeredStaffName, 
+          actionType: type,
+          storeId: globalStoreId,
+          lat: lat, 
+          lng: lng  
+        };
+
+        fetch(WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' }, 
+          body: JSON.stringify(payload)
+        }).then(response => response.json()) 
+        .then(data => {
+          if (data.status === 'success') {
+            localStorage.setItem('lastAction_' + globalStoreId, type);
+            localStorage.setItem('actionDate_' + globalStoreId, todayString);
+            
+            let customMessage = (type === '出勤') ? "今日もよろしくお願いします！" : (type === '休憩開始') ? "しっかり休んでくださいね。" : (type === '休憩終了') ? "後半も頑張りましょう！" : "本日もお疲れ様でした！";
+            
+            Swal.fire({ title: customMessage, text: `${type}を記録しました（${timeString}）`, icon: 'success', confirmButtonText: 'OK', allowOutsideClick: false })
+            .then(() => { liff.closeWindow(); document.getElementById('status').innerText = "記録が完了しました。"; });
+          } else {
+            Swal.fire('記録エラー', `打刻に失敗しました:<br>${data.message}`, 'error');
+          }
+        }).catch(err => {
+          Swal.fire('通信エラー', '打刻に失敗しました。電波の良い場所で再度お試しください。', 'error');
+        }).finally(() => { isProcessing = false; });
+      });
+    }
+  </script>
+</body>
+</html>
