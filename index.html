@@ -165,6 +165,7 @@
       if (type !== '出勤' && (!lastAction || lastAction === '退勤')) { Swal.fire('エラー', 'まずは「出勤」を記録してください', 'warning'); return; }
       if (type === '休憩開始' && lastAction === '休憩開始') { Swal.fire('エラー', 'すでに休憩中です', 'warning'); return; }
       if (type === '休憩終了' && lastAction !== '休憩開始') { Swal.fire('エラー', '休憩開始が記録されていません', 'warning'); return; }
+      if (type === '退勤' && lastAction === '休憩開始') { Swal.fire('エラー', '先に「休憩終了」を記録してください', 'warning'); return; }
 
       const now = new Date();
       const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
