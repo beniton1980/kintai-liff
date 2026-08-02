@@ -4,26 +4,20 @@
   <meta charset="UTF-8">
   <title>タイムレコーダー</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  
   <style>
     body { background-color: #f5f5f5; font-family: sans-serif; text-align: center; padding: 20px; margin: 0; }
     .title-area { margin-bottom: 20px; }
     #userName { color: #333; font-size: 1.2em; }
     #dateDisplay { font-size: 16px; color: #666; margin-top: 10px; }
     #clockDisplay { font-size: 38px; font-weight: bold; color: #222; margin-bottom: 15px; letter-spacing: 2px; }
-    
-    .btn { 
-      width: 90%; max-width: 300px; height: 80px; margin: 10px auto; 
-      font-size: 24px; font-weight: bold; border: none; border-radius: 10px; 
-      color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); cursor: pointer; display: block;
-    }
+    .btn { width: 90%; max-width: 300px; height: 80px; margin: 10px auto; font-size: 24px; font-weight: bold; border: none; border-radius: 10px; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); cursor: pointer; display: block; }
     .btn:active { transform: translateY(2px); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .btn-in { background-color: #00B900; } 
     .btn-break { background-color: #f39c12; } 
     .btn-out { background-color: #e74c3c; } 
+    .btn-correction { background-color: #6c757d; height: 50px; font-size: 16px; margin-top: 30px; }
     #status { margin-top: 20px; font-weight: bold; color: #333; }
   </style>
 </head>
@@ -40,11 +34,14 @@
   <button class="btn btn-break" onclick="sendData('休憩終了')">⚪️ 休憩終了</button>
   <button class="btn btn-out" onclick="sendData('退勤')">🔴 退 勤</button>
 
+  <button class="btn btn-correction" onclick="requestCorrection()">申請 📝 打刻もれ・修正はこちら</button>
+
   <p id="status"></p>
 
   <script>
     const LIFF_ID = "2010761826-WrnKXQXa"; 
-    const WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbz4BvfQjL2lpKiWnUmV0sEA_KaC-OAO6_h1lfWSQ8bBhcfVnPdcXZAxCdMxKLS33ifgCw/exec"; 
+    // 【★】現在使用しているGASの最新URLを入れてください
+    const WEBHOOK_URL = "https://script.google.com/macros/s/【★ここにGASのURL★】/exec"; 
     
     let isProcessing = false;
     let globalStoreId = "";
@@ -56,16 +53,12 @@
       document.getElementById('dateDisplay').innerText = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 (${days[now.getDay()]})`;
       document.getElementById('clockDisplay').innerText = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     }
-    
     setInterval(updateClock, 1000);
     updateClock(); 
 
-    // URLまたはliff.stateからstore_idを正確に抽出する関数
     function getStoreIdFromUrl() {
       const urlParams = new URLSearchParams(window.location.search);
       let id = urlParams.get('store_id');
-      
-      // 通常のURLになく、liff.stateの中に隠れている場合（LINEの仕様対策）
       if (!id && urlParams.has('liff.state')) {
         const stateString = decodeURIComponent(urlParams.get('liff.state'));
         const stateParams = new URLSearchParams(stateString.replace(/^\?/, ''));
@@ -76,14 +69,12 @@
 
     window.onload = function() {
       let currentStoreId = getStoreIdFromUrl();
-
       liff.init({ liffId: LIFF_ID }).then(() => {
         if (currentStoreId && currentStoreId !== "null" && currentStoreId !== "undefined") {
           localStorage.setItem('saved_store_id', currentStoreId);
         } else {
           currentStoreId = localStorage.getItem('saved_store_id');
         }
-
         globalStoreId = currentStoreId;
 
         if (!globalStoreId || globalStoreId === "null" || globalStoreId === "undefined") {
@@ -92,69 +83,40 @@
         }
 
         if (liff.isLoggedIn()) {
-          liff.getProfile().then(profile => {
-            checkUserRegistration(profile, globalStoreId);
-          });
+          liff.getProfile().then(profile => { checkUserRegistration(profile, globalStoreId); });
         } else {
           liff.login({ redirectUri: window.location.href });
         }
-      }).catch(err => {
-        document.getElementById('status').innerText = `初期化エラー: ${err}`;
-      });
+      }).catch(err => { document.getElementById('status').innerText = `初期化エラー: ${err}`; });
     };
 
     function checkUserRegistration(profile, storeId) {
-      Swal.fire({ title: 'データ確認中...', html: 'スタッフ名簿をチェックしています☁️', allowOutsideClick: false, showConfirmButton: false, didOpen: () => { Swal.showLoading(); } });
+      Swal.fire({ title: 'データ確認中...', allowOutsideClick: false, showConfirmButton: false, didOpen: () => { Swal.showLoading(); } });
       fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ actionType: 'check_user', userId: profile.userId, storeId: storeId }) })
-      .then(response => response.json())
-      .then(data => {
-        if (data.status === 'error') {
-          Swal.fire('システムエラー', `裏側でエラーが発生しました:<br>${data.message}`, 'error');
-        } else if (data.isRegistered) {
+      .then(r => r.json()).then(data => {
+        if (data.isRegistered) {
           registeredStaffName = data.staffName;
           document.getElementById('userName').innerText = `${registeredStaffName} さん`;
           Swal.close();
-        } else {
-          promptRegistration(profile, storeId);
-        }
-      }).catch(err => { Swal.fire('通信エラー', 'データの確認に失敗しました。画面を再読み込みしてください。', 'error'); });
+        } else { promptRegistration(profile, storeId); }
+      });
     }
 
     function promptRegistration(profile, storeId) {
       Swal.fire({
-        title: '初回登録のお願い', 
-        html: '給与計算に使用するため、<br><b>フルネーム（本名）</b>を入力してください。<br><br><span style="font-size:0.8em; color:gray;">※一度登録すると変更できません</span>',
-        input: 'text', inputPlaceholder: '例：石上 忠義', allowOutsideClick: false, confirmButtonText: 'この名前で登録する',
+        title: '初回登録のお願い', html: '給与計算に使用するため、<br><b>フルネーム（本名）</b>を入力してください。', input: 'text', allowOutsideClick: false, confirmButtonText: '登録する',
         preConfirm: (name) => { if (!name || name.trim() === "") Swal.showValidationMessage('本名を入力してください'); return name.trim(); }
       }).then((result) => {
         if (result.isConfirmed) {
-          const inputName = result.value;
-          Swal.fire({ title: '登録中...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-          
-          fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ actionType: 'register_user', userId: profile.userId, storeId: storeId, staffName: inputName }) })
-          .then(r => r.json()).then(data => {
-            if (data.status === 'success') {
-              registeredStaffName = inputName; 
-              document.getElementById('userName').innerText = `${registeredStaffName} さん`;
-              Swal.fire('登録完了！', '本名を登録しました。<br>これより出退勤の記録が可能です。', 'success');
-            } else {
-              Swal.fire('登録エラー', `登録に失敗しました:<br>${data.message}`, 'error').then(() => {
-                promptRegistration(profile, storeId);
-              });
-            }
-          }).catch(err => { 
-            Swal.fire('通信エラー', '登録に失敗しました。もう一度お試しください。', 'error').then(() => {
-                promptRegistration(profile, storeId);
-            });
-          });
+          fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ actionType: 'register_user', userId: profile.userId, storeId: storeId, staffName: result.value }) })
+          .then(() => { location.reload(); });
         }
       });
     }
 
     function sendData(type) {
       if (isProcessing) return;
-      if (!liff.isLoggedIn()) { Swal.fire('エラー', 'LINEログインが必要です', 'error'); return; }
-      if (!registeredStaffName) { Swal.fire('エラー', '本名が登録されていません。画面を再読み込みしてください。', 'error'); return; }
+      if (!registeredStaffName) return;
 
       const todayString = new Date().toLocaleDateString(); 
       let savedDate = localStorage.getItem('actionDate_' + globalStoreId);
@@ -165,53 +127,80 @@
       if (type !== '出勤' && (!lastAction || lastAction === '退勤')) { Swal.fire('エラー', 'まずは「出勤」を記録してください', 'warning'); return; }
       if (type === '休憩開始' && lastAction === '休憩開始') { Swal.fire('エラー', 'すでに休憩中です', 'warning'); return; }
       if (type === '休憩終了' && lastAction !== '休憩開始') { Swal.fire('エラー', '休憩開始が記録されていません', 'warning'); return; }
+      
+      // ★ 休憩中の退勤ブロック
       if (type === '退勤' && lastAction === '休憩開始') { Swal.fire('エラー', '先に「休憩終了」を記録してください', 'warning'); return; }
 
-      const now = new Date();
-      const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
       isProcessing = true;
-
-      Swal.fire({ title: '位置情報を取得中...', html: `<b>${type}</b> を記録しています<br>少々お待ちください☁️`, allowOutsideClick: false, showConfirmButton: false, didOpen: () => { Swal.showLoading(); } });
+      const timeString = `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`;
+      Swal.fire({ title: '記録中...', allowOutsideClick: false, showConfirmButton: false, didOpen: () => { Swal.showLoading(); } });
 
       navigator.geolocation.getCurrentPosition(
-        (position) => { executePunch(type, timeString, todayString, position.coords.latitude, position.coords.longitude); },
-        (error) => { executePunch(type, timeString, todayString, null, null); },
+        (pos) => { executePunch(type, timeString, todayString, pos.coords.latitude, pos.coords.longitude); },
+        (err) => { executePunch(type, timeString, todayString, null, null); },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
     }
 
     function executePunch(type, timeString, todayString, lat, lng) {
       liff.getProfile().then(profile => {
-        const payload = {
-          userId: profile.userId,
-          displayName: registeredStaffName, 
-          actionType: type,
-          storeId: globalStoreId,
-          lat: lat, 
-          lng: lng  
-        };
-
-        fetch(WEBHOOK_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' }, 
-          body: JSON.stringify(payload)
-        }).then(response => response.json()) 
-        .then(data => {
+        const payload = { userId: profile.userId, displayName: registeredStaffName, actionType: type, storeId: globalStoreId, lat: lat, lng: lng };
+        fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) })
+        .then(r => r.json()).then(data => {
           if (data.status === 'success') {
             localStorage.setItem('lastAction_' + globalStoreId, type);
             localStorage.setItem('actionDate_' + globalStoreId, todayString);
-            
-            let customMessage = (type === '出勤') ? "今日もよろしくお願いします！" : (type === '休憩開始') ? "しっかり休んでくださいね。" : (type === '休憩終了') ? "後半も頑張りましょう！" : "本日もお疲れ様でした！";
-            
-            Swal.fire({ title: customMessage, text: `${type}を記録しました（${timeString}）`, icon: 'success', confirmButtonText: 'OK', allowOutsideClick: false })
-            .then(() => { liff.closeWindow(); document.getElementById('status').innerText = "記録が完了しました。"; });
-          } else {
-            Swal.fire('記録エラー', `打刻に失敗しました:<br>${data.message}`, 'error');
+            Swal.fire({ title: "記録完了", text: `${type}を記録しました（${timeString}）`, icon: 'success' }).then(() => liff.closeWindow());
           }
-        }).catch(err => {
-          Swal.fire('通信エラー', '打刻に失敗しました。電波の良い場所で再度お試しください。', 'error');
         }).finally(() => { isProcessing = false; });
+      });
+    }
+
+    // ★ 新機能：修正申請フォーム
+    function requestCorrection() {
+      if (!registeredStaffName) return;
+      Swal.fire({
+        title: '打刻の修正・もれ申請',
+        html: `
+          <div style="text-align: left; font-size: 14px;">
+            <label>修正する日付</label>
+            <input type="date" id="c-date" class="swal2-input" style="margin-top:0; margin-bottom:15px; width:80%;">
+            <label>打刻の種類</label>
+            <select id="c-type" class="swal2-select" style="margin-top:0; margin-bottom:15px; width:80%; display:block;">
+              <option value="出勤">出勤</option><option value="休憩開始">休憩開始</option>
+              <option value="休憩終了">休憩終了</option><option value="退勤">退勤</option>
+            </select>
+            <label>正しい時間</label>
+            <input type="time" id="c-time" class="swal2-input" style="margin-top:0; margin-bottom:15px; width:80%;">
+            <label>理由（任意）</label>
+            <input type="text" id="c-reason" class="swal2-input" placeholder="例：押し忘れのため" style="margin-top:0; width:80%;">
+          </div>
+        `,
+        confirmButtonText: '管理者に送信する', showCancelButton: true, cancelButtonText: 'キャンセル',
+        preConfirm: () => {
+          const date = document.getElementById('c-date').value;
+          const type = document.getElementById('c-type').value;
+          const time = document.getElementById('c-time').value;
+          const reason = document.getElementById('c-reason').value;
+          if (!date || !time) { Swal.showValidationMessage('日付と時間は必須です'); return false; }
+          return { date, type, time, reason };
+        }
+      }).then((result) => {
+        if (result.isConfirmed) {
+          Swal.fire({ title: '送信中...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+          liff.getProfile().then(profile => {
+            const payload = { 
+              actionType: 'request_correction', storeId: globalStoreId, userId: profile.userId, 
+              staffName: registeredStaffName, date: result.value.date, type: result.value.type, 
+              time: result.value.time, reason: result.value.reason 
+            };
+            fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) })
+            .then(r => r.json()).then(data => {
+              if(data.status === 'success') Swal.fire('送信完了', '管理者に申請を送りました。承認されると反映されます。', 'success');
+              else Swal.fire('エラー', '送信に失敗しました', 'error');
+            });
+          });
+        }
       });
     }
   </script>
