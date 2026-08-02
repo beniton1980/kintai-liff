@@ -60,20 +60,38 @@
     setInterval(updateClock, 1000);
     updateClock(); 
 
-    window.onload = function() {
+    // ★追加：URLまたはliff.stateからstore_idを正確に抽出する関数
+    function getStoreIdFromUrl() {
       const urlParams = new URLSearchParams(window.location.search);
-      let currentStoreId = urlParams.get('store_id');
+      let id = urlParams.get('store_id');
+      
+      // 通常のURLになく、liff.stateの中に隠れている場合
+      if (!id && urlParams.has('liff.state')) {
+        const stateString = decodeURIComponent(urlParams.get('liff.state'));
+        const stateParams = new URLSearchParams(stateString.replace(/^\?/, ''));
+        id = stateParams.get('store_id');
+      }
+      return id;
+    }
+
+    window.onload = function() {
+      // 1. URL（またはliff.state）から店舗IDの取得を試みる
+      let currentStoreId = getStoreIdFromUrl();
 
       liff.init({ liffId: LIFF_ID }).then(() => {
-        // 店舗IDの確実な保存と呼び出し
-        if (currentStoreId && currentStoreId !== "null") {
+        
+        if (currentStoreId && currentStoreId !== "null" && currentStoreId !== "undefined") {
+          // 正しいIDが取得できた場合は記憶を更新
           localStorage.setItem('saved_store_id', currentStoreId);
         } else {
+          // URLにない場合は記憶から呼び出す
           currentStoreId = localStorage.getItem('saved_store_id');
         }
+
         globalStoreId = currentStoreId;
 
-        if (!globalStoreId || globalStoreId === "null") {
+        // それでもIDがない、または"null"が入っている場合
+        if (!globalStoreId || globalStoreId === "null" || globalStoreId === "undefined") {
            Swal.fire('エラー', '正しいQRコードから読み込んでください', 'error');
            return;
         }
