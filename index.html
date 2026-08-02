@@ -182,6 +182,14 @@
           const time = document.getElementById('c-time').value;
           const reason = document.getElementById('c-reason').value;
           if (!date || !time) { Swal.showValidationMessage('日付と時間は必須です'); return false; }
+          
+          // ▼追加：現在時刻よりも未来の申請をブロックする
+          const inputDateTime = new Date(`${date}T${time}`);
+          if (inputDateTime > new Date()) {
+            Swal.showValidationMessage('現在時刻より未来の打刻は申請できません');
+            return false;
+          }
+          
           return { date, type, time, reason };
         }
       }).then((result) => {
